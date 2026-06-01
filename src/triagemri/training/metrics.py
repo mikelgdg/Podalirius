@@ -1,14 +1,16 @@
+"""Evaluation metrics for triage classification and anomaly detection."""
+
 import warnings
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from sklearn.metrics import (
-    roc_auc_score,
-    precision_recall_curve,
     average_precision_score,
+    brier_score_loss,
     confusion_matrix,
     f1_score,
-    brier_score_loss,
+    precision_recall_curve,
+    roc_auc_score,
 )
 
 
@@ -17,30 +19,83 @@ def find_threshold_for_sensitivity(
     y_scores: np.ndarray,
     target_sensitivity: float = 0.99,
 ) -> Tuple[float, float, float]:
+    """Find the highest threshold that achieves at least *target_sensitivity*.
+
+    Uses the precision-recall curve, which returns recall sorted
+    **decreasing** (from 1.0 down to 0.0).  We pick the **last** index
+    where ``recall >= target_sensitivity``, which corresponds to the
+    highest threshold — maximising specificity while meeting the
+    sensitivity target.
+
+    Args:
+        y_true: Binary ground-truth labels.
+        y_scores: Predicted anomaly scores in [0, 1].
+        target_sensitivity: Minimum acceptable sensitivity.
+
+    Returns:
+        ``(threshold, actual_sensitivity, actual_specificity)``.
+    """
     _, recall, thresholds = precision_recall_curve(y_true, y_scores)
     thresholds = np.append(thresholds, 0.0)
 
     matches = np.where(recall >= target_sensitivity)[0]
     if len(matches) > 0:
         best_idx = matches[-1]
-        threshold = thresholds[best_idx]
-        actual_sensitivity = recall[best_idx]
+        threshold = float(thresholds[best_idx])
+        actual_sensitivity = float(recall[best_idx])
     else:
-        best_idx = len(recall) - 1
         threshold = 0.0
-        actual_sensitivity = float("nan")
+        actual_sensitivity = 0.0
 
     y_pred = (y_scores >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     if tn + fp > 0:
-        specificity = tn / (tn + fp)
+        specificity = float(tn / (tn + fp))
     else:
         specificity = float("nan")
 
     if threshold == 0.0 and tp + fn > 0:
-        actual_sensitivity = tp / (tp + fn)
+        actual_sensitivity = float(tp / (tp + fn))
 
-    return float(threshold), float(actual_sensitivity), float(specificity)
+    return threshold, actual_sensitivity, specificity
+
+
+def find_inconclusive_thresholds(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    target_sensitivity: float = 0.99,
+    margin: float = 0.05,
+) -> Dict[str, float]:
+    """Find two thresholds defining a triage zone.
+
+    - **thr_revisar**: scores ≥ this value → REVISAR (high confidence abnormal).
+    - **thr_inconclusive**: scores below *thr_revisar* but above
+      *thr_normal* → INCONCLUSIVE (needs radiologist but not urgent).
+    - **thr_normal**: scores ≤ this value → NORMAL.
+
+    The inconclusive zone width is controlled by *margin*.
+
+    Args:
+        y_true: Binary labels.
+        y_scores: Predicted scores.
+        target_sensitivity: Sensitivity target for the REVISAR threshold.
+        margin: Fraction of score range reserved for inconclusive zone.
+
+    Returns:
+        Dict with ``thr_normal``, ``thr_revisar``, and ``thr_inconclusive_width``.
+    """
+    thr_revisar, sens, spec = find_threshold_for_sensitivity(
+        y_true, y_scores, target_sensitivity
+    )
+    thr_inconclusive = max(0.0, thr_revisar - margin)
+    thr_normal = max(0.0, thr_inconclusive - margin)
+    return {
+        "thr_normal": thr_normal,
+        "thr_revisar": thr_revisar,
+        "thr_inconclusive_min": thr_normal,
+        "thr_inconclusive_max": thr_revisar,
+        "inconclusive_width": thr_revisar - thr_normal,
+    }
 
 
 def compute_triage_metrics(
@@ -48,6 +103,19 @@ def compute_triage_metrics(
     y_scores: np.ndarray,
     threshold: Optional[float] = None,
 ) -> dict:
+    """Compute a standard set of triage metrics.
+
+    Args:
+        y_true: Binary ground-truth labels.
+        y_scores: Anomaly scores in [0, 1].
+        threshold: Decision threshold.  If None, computed via
+            :func:`find_threshold_for_sensitivity` at 99%.
+
+    Returns:
+        Dict with ``roc_auc``, ``pr_auc``, ``sensitivity``, ``specificity``,
+        ``npv``, ``ppv``, ``threshold``, ``discard_rate``, ``f1``,
+        ``accuracy``, and ``confusion_matrix``.
+    """
     y_true = np.asarray(y_true).flatten()
     y_scores = np.asarray(y_scores).flatten()
 
@@ -63,7 +131,9 @@ def compute_triage_metrics(
         pr_auc = float("nan")
 
     if threshold is None:
-        threshold, _, _ = find_threshold_for_sensitivity(y_true, y_scores, target_sensitivity=0.99)
+        threshold, _, _ = find_threshold_for_sensitivity(
+            y_true, y_scores, target_sensitivity=0.99
+        )
 
     y_pred = (y_scores >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
@@ -71,7 +141,7 @@ def compute_triage_metrics(
     sensitivity = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
     specificity = tn / (tn + fp) if (tn + fp) > 0 else float("nan")
     ppv = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
-    npv = tn / (tn + fn) if (tn + fn) > 0 else float("nan")
+    npv_val = tn / (tn + fn) if (tn + fn) > 0 else float("nan")
     discard_rate = tn / len(y_true)
 
     f1 = float(f1_score(y_true, y_pred))
@@ -82,13 +152,18 @@ def compute_triage_metrics(
         "pr_auc": pr_auc,
         "sensitivity": float(sensitivity),
         "specificity": float(specificity),
-        "npv": float(npv),
+        "npv": float(npv_val),
         "ppv": float(ppv),
         "threshold": float(threshold),
         "discard_rate": float(discard_rate),
         "f1": f1,
         "accuracy": float(accuracy),
-        "confusion_matrix": {"tp": int(tp), "fp": int(fp), "tn": int(tn), "fn": int(fn)},
+        "confusion_matrix": {
+            "tp": int(tp),
+            "fp": int(fp),
+            "tn": int(tn),
+            "fn": int(fn),
+        },
     }
 
 
@@ -97,6 +172,21 @@ def calibration_metrics(
     y_scores: np.ndarray,
     n_bins: int = 10,
 ) -> dict:
+    """Compute calibration metrics with equal-mass binning.
+
+    Uses quantile-based bins so every bin contains approximately the same
+    number of samples — robust for imbalanced datasets.
+
+    Args:
+        y_true: Binary labels.
+        y_scores: Scores in [0, 1].
+        n_bins: Number of bins.
+
+    Returns:
+        Dict with ``ece``, ``brier``, ``n_bins``, ``bin_edges``,
+        ``bin_centers``, ``bin_accuracies``, ``bin_confidences``,
+        ``bin_counts``.
+    """
     y_true = np.asarray(y_true).flatten()
     y_scores = np.asarray(y_scores).flatten()
 
@@ -122,7 +212,7 @@ def calibration_metrics(
             accuracies[i] = np.mean(y_true[in_bin])
             confidences[i] = np.mean(y_scores[in_bin])
 
-    ece = np.sum(counts * np.abs(accuracies - confidences)) / np.sum(counts)
+    ece = np.sum(counts * np.abs(accuracies - confidences)) / max(np.sum(counts), 1)
     brier = float(brier_score_loss(y_true, y_scores))
 
     return {
@@ -137,7 +227,48 @@ def calibration_metrics(
     }
 
 
+def compute_segmentation_metrics(
+    heatmap: np.ndarray, gt_mask: np.ndarray, threshold: float = 0.5
+) -> Dict[str, float]:
+    """Compute Dice, IoU between binary heatmap and ground truth mask.
+
+    Args:
+        heatmap: ``(D, H, W)`` float heatmap.
+        gt_mask: ``(D, H, W)`` binary ground truth mask.
+        threshold: Binarisation threshold for the heatmap.
+
+    Returns:
+        Dict with ``dice``, ``iou``, ``sensitivity``, ``specificity``.
+    """
+    heatmap = np.asarray(heatmap, dtype=np.float64)
+    gt_mask = np.asarray(gt_mask, dtype=np.float64)
+
+    pred_bin = (heatmap >= threshold).astype(np.float64)
+    gt_bin = (gt_mask > 0).astype(np.float64)
+
+    intersection = np.sum(pred_bin * gt_bin)
+    dice_val = (
+        (2.0 * intersection) / (np.sum(pred_bin) + np.sum(gt_bin) + 1e-8)
+    )
+
+    union = np.sum((pred_bin + gt_bin) > 0)
+    iou_val = intersection / (union + 1e-8)
+
+    tp = intersection
+    fn = np.sum((1 - pred_bin) * gt_bin)
+    tn = np.sum((1 - pred_bin) * (1 - gt_bin))
+    fp = np.sum(pred_bin * (1 - gt_bin))
+
+    return {
+        "dice": float(dice_val),
+        "iou": float(iou_val),
+        "sensitivity_voxel": float(tp / (tp + fn + 1e-8)),
+        "specificity_voxel": float(tn / (tn + fp + 1e-8)),
+    }
+
+
 def compute_metrics_per_anatomy(results_df) -> dict:
+    """Compute per-anatomy metrics from a results DataFrame."""
     import pandas as pd
 
     df = pd.DataFrame(results_df)
@@ -157,6 +288,7 @@ def compute_metrics_per_anatomy(results_df) -> dict:
 
 
 def format_metrics_report(metrics_dict: dict) -> str:
+    """Format metrics dict as a human-readable report string."""
     lines = []
     for key, metrics in metrics_dict.items():
         lines.append(f"--- {key} ---")
@@ -171,6 +303,9 @@ def format_metrics_report(metrics_dict: dict) -> str:
         lines.append(f"  Discard Rate:  {metrics['discard_rate']:.4f}")
         lines.append(f"  Threshold:     {metrics['threshold']:.4f}")
         cm = metrics.get("confusion_matrix", {})
-        lines.append(f"  Confusion:     TN={cm.get('tn', '?')} FP={cm.get('fp', '?')} FN={cm.get('fn', '?')} TP={cm.get('tp', '?')}")
+        lines.append(
+            f"  Confusion:     TN={cm.get('tn', '?')} FP={cm.get('fp', '?')} "
+            f"FN={cm.get('fn', '?')} TP={cm.get('tp', '?')}"
+        )
         lines.append("")
     return "\n".join(lines)

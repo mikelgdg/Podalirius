@@ -1,0 +1,36 @@
+stages:
+  download:
+    cmd: bash scripts/download_data.sh
+    outs:
+      - data/raw/
+
+  preprocess:
+    cmd: python -c "from triagemri.data.datasets import create_dataloaders; from triagemri.config import load_config; c=load_config(); create_dataloaders(c)"
+    deps:
+      - data/raw/
+      - src/triagemri/data/preprocessing.py
+      - src/triagemri/data/datasets.py
+    outs:
+      - data/processed/
+
+  train:
+    cmd: python -m triagemri.cli.train --output_dir outputs/dvc_run
+    deps:
+      - data/raw/
+      - src/triagemri/
+      - configs/
+      - weights/
+    outs:
+      - outputs/dvc_run/
+    metrics:
+      - outputs/dvc_run/run_card.yaml:
+          cache: false
+
+  evaluate:
+    cmd: python -m triagemri.cli.evaluate --checkpoint outputs/dvc_run/checkpoints/last.ckpt --output_dir outputs/evaluation
+    deps:
+      - outputs/dvc_run/checkpoints/
+      - src/triagemri/evaluation/
+    metrics:
+      - outputs/evaluation/evaluation_results.json:
+          cache: false

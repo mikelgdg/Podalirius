@@ -7,7 +7,7 @@ optimiser, and LR scheduling in a single Lightning module.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -22,14 +22,13 @@ class TriageLightningModule(pl.LightningModule):
     computation, and learning rate scheduling with linear warmup
     followed by cosine annealing.
 
+    Supports multi-task loss when the model has a decoder enabled.
+
     Args:
         model: A :class:`~triagemri.models.TriageModel` instance.
-        loss_fn: A callable loss that accepts ``(logits, targets)``.
-        config: Merged :class:`~triagemri.config.Config` instance.  Uses
-            ``config.training`` for hyper-parameters:
-            ``optimizer.lr``, ``optimizer.weight_decay``,
-            ``scheduler.warmup_epochs``, ``scheduler.min_lr``,
-            ``max_epochs``.
+        loss_fn: A callable loss that accepts ``(logits, targets)`` or
+            ``(logits, targets, heatmap, attention)`` for multi-task.
+        config: Merged :class:`~triagemri.config.Config` instance.
     """
 
     def __init__(
@@ -41,11 +40,14 @@ class TriageLightningModule(pl.LightningModule):
         super().__init__()
         self.model = model
         self.loss_fn = loss_fn
-        self.lr: float = config.training.optimizer.lr
-        self.weight_decay: float = config.training.optimizer.weight_decay
-        self.warmup_epochs: int = config.training.scheduler.warmup_epochs
-        self.min_lr: float = config.training.scheduler.min_lr
-        self.max_epochs: int = config.training.max_epochs
+        self.lr: float = float(config.training.optimizer.lr)
+        self.weight_decay: float = float(config.training.optimizer.weight_decay)
+        self.warmup_epochs: int = int(config.training.scheduler.warmup_epochs)
+        self.min_lr: float = float(config.training.scheduler.min_lr)
+        self.max_epochs: int = int(config.training.max_epochs)
+        self.exclude_bias_decay: bool = config.training.optimizer.get(
+            "exclude_bias_decay", True
+        )
 
         self.val_preds: List[torch.Tensor] = []
         self.val_labels: List[torch.Tensor] = []
@@ -57,7 +59,7 @@ class TriageLightningModule(pl.LightningModule):
     def forward(
         self,
         x: torch.Tensor,
-        anatomy: Optional[str | List[str]] = None,
+        anatomy: Optional[Union[str, List[str]]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Delegates to ``self.model.forward``."""
         return self.model(x, anatomy)
@@ -77,9 +79,37 @@ class TriageLightningModule(pl.LightningModule):
 
         output = self.model(volume, anatomy)
         logits = output["logits"].squeeze(-1)
-        loss = self.loss_fn(logits, label)
 
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        has_decoder = hasattr(self.model, "decoder") and self.model.decoder is not None
+        if has_decoder and "heatmap" in output:
+            heatmap = output["heatmap"]
+            attention = output.get("attention")
+            loss = self.loss_fn(logits, label, heatmap=heatmap, attention=attention)
+        else:
+            loss = self.loss_fn(logits, label)
+
+        self.log(
+            "train/loss",
+            loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+
+        if "attention" in output:
+            attn = output["attention"].squeeze(-1)
+            ent = -(attn * torch.log(attn + 1e-8)).sum(dim=-1).mean()
+            self.log("train/attention_entropy", ent, on_step=False, on_epoch=True)
+
+        if (
+            has_decoder
+            and "attention" in output
+            and hasattr(self.loss_fn, "pseudo_loss")
+        ):
+            coverage = self.loss_fn.pseudo_loss.coverage(output["attention"])
+            self.log("train/pseudo_coverage", coverage, on_step=False, on_epoch=True)
+
         return loss
 
     # ------------------------------------------------------------------
@@ -97,7 +127,17 @@ class TriageLightningModule(pl.LightningModule):
 
         output = self.model(volume, anatomy)
         logits = output["logits"].squeeze(-1)
-        loss = self.loss_fn(logits, label)
+
+        has_decoder = hasattr(self.model, "decoder") and self.model.decoder is not None
+        if has_decoder and "heatmap" in output:
+            loss = self.loss_fn(
+                logits,
+                label,
+                heatmap=output["heatmap"],
+                attention=output.get("attention"),
+            )
+        else:
+            loss = self.loss_fn(logits, label)
 
         scores = torch.sigmoid(logits)
         if self.trainer.world_size > 1:
@@ -119,69 +159,82 @@ class TriageLightningModule(pl.LightningModule):
         all_preds = torch.cat(self.val_preds).numpy().astype(np.float64)
         all_labels = torch.cat(self.val_labels).numpy().astype(np.float64)
 
-        from triagemri.training.metrics import compute_triage_metrics
-
         try:
+            from triagemri.training.metrics import compute_triage_metrics
+
             metrics = compute_triage_metrics(all_labels, all_preds)
         except ValueError:
             warnings.warn(
                 "compute_triage_metrics failed — validation may have only "
                 "one class. Skipping metric logging this epoch."
             )
-            return
-        finally:
             self.val_preds.clear()
             self.val_labels.clear()
+            return
 
         for name, value in metrics.items():
-            if isinstance(value, (int, float)) and name != "roc_auc":
+            if isinstance(value, (int, float)) and name not in (
+                "roc_auc",
+                "confusion_matrix",
+            ):
                 if not np.isnan(value):
                     self.log(f"val/{name}", value, on_epoch=True)
 
         if "roc_auc" in metrics and not np.isnan(metrics["roc_auc"]):
-            self.log("val/roc_auc", metrics["roc_auc"], on_epoch=True, prog_bar=True)
-
-        if "ppv" in metrics and not np.isnan(metrics["ppv"]):
-            self.log("val/precision@99sens", metrics["ppv"], on_epoch=True, prog_bar=True)
-        if "specificity" in metrics and not np.isnan(metrics["specificity"]):
-            self.log("val/specificity", metrics["specificity"], on_epoch=True)
+            self.log(
+                "val/roc_auc", metrics["roc_auc"], on_epoch=True, prog_bar=True
+            )
         if "discard_rate" in metrics and not np.isnan(metrics["discard_rate"]):
             self.log("val/discard_rate", metrics["discard_rate"], on_epoch=True)
 
-        # Also compute accuracy at threshold 0.5 (simple binary decision)
         try:
-            acc_05 = float((all_labels == (all_preds >= 0.5).astype(all_labels.dtype)).mean())
+            acc_05 = float(
+                (
+                    all_labels == (all_preds >= 0.5).astype(all_labels.dtype)
+                ).mean()
+            )
             if not np.isnan(acc_05):
                 self.log("val/acc@0.5", acc_05, on_epoch=True, prog_bar=True)
         except Exception:
             pass
+
+        self.val_preds.clear()
+        self.val_labels.clear()
 
     # ------------------------------------------------------------------
     # Optimizer & Scheduler
     # ------------------------------------------------------------------
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        decay_params = []
-        no_decay_params = []
-        for p in self.model.parameters():
-            if not p.requires_grad:
-                continue
-            if p.dim() >= 2:
-                decay_params.append(p)
-            else:
-                no_decay_params.append(p)
+        if self.exclude_bias_decay:
+            decay_params: list[nn.Parameter] = []
+            no_decay_params: list[nn.Parameter] = []
+            for name, p in self.model.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if p.dim() >= 2 and "bias" not in name:
+                    decay_params.append(p)
+                else:
+                    no_decay_params.append(p)
 
-        optimizer = torch.optim.AdamW(
-            [
-                {"params": decay_params, "weight_decay": self.weight_decay},
-                {"params": no_decay_params, "weight_decay": 0.0},
-            ],
-            lr=self.lr,
-        )
+            optimizer = torch.optim.AdamW(
+                [
+                    {"params": decay_params, "weight_decay": self.weight_decay},
+                    {"params": no_decay_params, "weight_decay": 0.0},
+                ],
+                lr=self.lr,
+            )
+        else:
+            optimizer = torch.optim.AdamW(
+                filter(lambda p: p.requires_grad, self.model.parameters()),
+                lr=self.lr,
+                weight_decay=self.weight_decay,
+            )
 
+        t_max = max(1, self.max_epochs - self.warmup_epochs)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=max(1, self.max_epochs - self.warmup_epochs - 1),
+            T_max=t_max,
             eta_min=self.min_lr,
         )
 

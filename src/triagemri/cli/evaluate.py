@@ -3,9 +3,9 @@
 Evaluate a trained Triage-MRI model.
 
 Usage:
-    python scripts/evaluate.py --checkpoint outputs/run_001/checkpoints/epoch_50.ckpt
-    python scripts/evaluate.py --checkpoint model.pt --calibrate --subgroup_analysis
-    python scripts/evaluate.py --checkpoint model.pt --save_attention_maps
+    triage-eval --checkpoint outputs/run_001/checkpoints/epoch_50.ckpt
+    triage-eval --checkpoint model.pt --calibrate --subgroup_analysis
+    triage-eval --checkpoint model.pt --save_attention_maps
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pytorch_lightning as pl
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+_project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_project_root / "src"))
 
 from triagemri.config import load_config
 from triagemri.data.datasets import create_dataloaders

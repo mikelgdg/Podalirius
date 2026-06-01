@@ -5,12 +5,27 @@ model:
     embed_dim: 768
     freeze_backbone: true
     freeze_projection: false
+    freeze_patch_embed: true
+    pretrained_strict: false
+    lora:
+      enabled: false
+      r: 4
+      alpha: 1.0
+      dropout: 0.0
 
   mil:
     attention_dim: 128
     hidden_dim: 512
-    dropout: 0.3
+    dropout: 0.15
     pooling: "gated_attention"
+    multi_scale: false
+
+  decoder:
+    enabled: false
+    upconv_channels: [256, 128, 64, 32, 16]
+    attention_gates: true
+    dropout: 0.1
 
   anatomy_mode: "shared"
   num_anatomies: 3
+  anatomies: ["brain", "prostate", "breast"]

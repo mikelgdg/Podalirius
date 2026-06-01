@@ -6,9 +6,9 @@ with attribute access for autocomplete support.
 
 from __future__ import annotations
 
-import os
+import warnings
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 import yaml
 
@@ -21,6 +21,8 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     Nested dictionaries are merged recursively.  Top-level keys present in
     *override* but not in *base* are added.  If a key is a dictionary in both
     inputs, their contents are merged; otherwise *override* replaces *base*.
+    A warning is emitted when a non-dict key in *base* is overwritten by
+    *override*.
 
     Returns:
         A new merged dictionary (inputs are not mutated).
@@ -30,6 +32,13 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = _deep_merge(result[key], value)
         else:
+            if key in result and result[key] != value and not (
+                isinstance(result[key], dict) and isinstance(value, dict)
+            ):
+                warnings.warn(
+                    f"Config collision: key '{key}' is being overwritten "
+                    f"({result[key]!r} → {value!r}) during YAML merge."
+                )
             result[key] = value
     return result
 
@@ -38,19 +47,61 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 # Schema: required top-level sections and per-section required keys.
 # ---------------------------------------------------------------------------
 _CONFIG_SCHEMA: Dict[str, Set[str]] = {
-    "data": {"raw_dir", "volume_size", "split"},
-    "model": {"encoder", "mil", "anatomy_mode"},
-    "training": {"batch_size", "max_epochs", "optimizer", "scheduler", "loss"},
+    "data": {
+        "raw_dir",
+        "volume_size",
+        "split",
+        "datasets",
+    },
+    "model": {
+        "encoder",
+        "mil",
+        "anatomy_mode",
+        "anatomies",
+    },
+    "training": {
+        "batch_size",
+        "max_epochs",
+        "optimizer",
+        "scheduler",
+        "loss",
+    },
+}
+
+_CONFIG_REQUIRED_KEYS: Dict[str, Set[str]] = {
+    "data.split": {"train_ratio", "val_ratio", "test_ratio", "seed"},
+    "model.encoder": {"checkpoint", "embed_dim", "freeze_backbone"},
+    "model.mil": {"attention_dim", "hidden_dim", "dropout", "pooling"},
+    "training.optimizer": {"name", "lr", "weight_decay"},
+    "training.scheduler": {"name", "warmup_epochs", "min_lr"},
+    "training.loss": {"name"},
 }
 
 _CONFIG_VALUE_CHECKS: Dict[str, list] = {
     "training.batch_size": [(lambda v: int(v) > 0, "must be > 0")],
     "training.max_epochs": [(lambda v: int(v) > 0, "must be > 0")],
+    "training.gradient_accumulation_steps": [(lambda v: int(v) > 0, "must be > 0")],
     "training.optimizer.lr": [(lambda v: float(v) > 0, "must be > 0")],
+    "training.optimizer.weight_decay": [(lambda v: float(v) >= 0, "must be >= 0")],
     "training.scheduler.warmup_epochs": [(lambda v: int(v) >= 0, "must be >= 0")],
-    "data.split.train_ratio": [(lambda v: 0 < float(v) <= 1, "must be in (0, 1]")],
-    "data.split.val_ratio": [(lambda v: 0 <= float(v) < 1, "must be in [0, 1)")],
-    "data.split.test_ratio": [(lambda v: 0 <= float(v) < 1, "must be in [0, 1)")],
+    "training.scheduler.min_lr": [(lambda v: float(v) >= 0, "must be >= 0")],
+    "data.split.train_ratio": [
+        (lambda v: 0 < float(v) <= 1, "must be in (0, 1]"),
+    ],
+    "data.split.val_ratio": [
+        (lambda v: 0 <= float(v) < 1, "must be in [0, 1)"),
+    ],
+    "data.split.test_ratio": [
+        (lambda v: 0 <= float(v) < 1, "must be in [0, 1)"),
+    ],
+    "model.mil.dropout": [
+        (lambda v: 0.0 <= float(v) <= 0.5, "must be in [0, 0.5]"),
+    ],
+    "model.mil.attention_dim": [(lambda v: int(v) > 0, "must be > 0")],
+    "model.mil.hidden_dim": [(lambda v: int(v) > 0, "must be > 0")],
+    "training.early_stopping.patience": [(lambda v: int(v) > 0, "must be > 0")],
+    "training.early_stopping.min_delta": [(lambda v: float(v) >= 0, "must be >= 0")],
+    "training.checkpoint.save_top_k": [(lambda v: int(v) > 0, "must be > 0")],
 }
 
 
@@ -67,17 +118,29 @@ def _config_get_nested(d: Dict[str, Any], dotted_key: str, default: Any = _MISSI
 
 
 def _validate_config(merged: Dict[str, Any]) -> None:
-    """Check required sections and value ranges in the merged config dict."""
-    for section, required_keys in _CONFIG_SCHEMA.items():
+    """Check required sections, keys, and value ranges in the merged config dict."""
+    for section, top_level_keys in _CONFIG_SCHEMA.items():
         if section not in merged:
             raise ValueError(
                 f"Merged config is missing required section '{section}'. "
-                f"Ensure {section}.yaml exists in the config directory."
+                f"Ensure {section}.yaml or equivalent keys exist in the config directory."
             )
-        for key in required_keys:
+        for key in top_level_keys:
             if key not in merged[section]:
                 raise ValueError(
                     f"config.{section} is missing required key '{key}'."
+                )
+
+    for dotted_key, required_keys in _CONFIG_REQUIRED_KEYS.items():
+        section = _config_get_nested(merged, dotted_key, default=None)
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            continue
+        for key in required_keys:
+            if key not in section:
+                raise ValueError(
+                    f"config.{dotted_key} is missing required key '{key}'."
                 )
 
     for dotted_key, checks in _CONFIG_VALUE_CHECKS.items():
@@ -88,6 +151,26 @@ def _validate_config(merged: Dict[str, Any]) -> None:
         for check_fn, msg in checks:
             if not check_fn(value):
                 raise ValueError(f"config.{dotted_key} = {value!r} {msg}")
+
+    warmup = _config_get_nested(merged, "training.scheduler.warmup_epochs", default=0)
+    max_epochs = _config_get_nested(merged, "training.max_epochs")
+    if warmup >= max_epochs:
+        raise ValueError(
+            f"training.scheduler.warmup_epochs ({warmup}) "
+            f"must be < training.max_epochs ({max_epochs})"
+        )
+
+    ratios = _config_get_nested(merged, "data.split", default={})
+    ratio_sum = (
+        float(ratios.get("train_ratio", 0))
+        + float(ratios.get("val_ratio", 0))
+        + float(ratios.get("test_ratio", 0))
+    )
+    if not (0.99 <= ratio_sum <= 1.01):
+        warnings.warn(
+            f"Split ratios sum to {ratio_sum:.3f} (expected ~1.0). "
+            f"Unexpected split behaviour may occur."
+        )
 
 
 def load_config(config_dir: str = "configs") -> Config:

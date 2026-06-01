@@ -20,15 +20,21 @@ dependencies = [
     "gradio>=4.0",
     "einops>=0.7",
     "timm>=0.9",
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
 ]
+
+[project.scripts]
+triage-train = "triagemri.cli.train:main"
+triage-eval = "triagemri.cli.evaluate:main"
+triage-demo = "triagemri.cli.demo:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
-    "pytest-cov>=4.1",
-    "black>=23.0",
     "ruff>=0.1",
-    "jupyter>=1.0",
+    "black>=23.0",
+    "pre-commit>=3.0",
 ]
 
 [build-system]

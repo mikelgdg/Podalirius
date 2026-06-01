@@ -3,7 +3,7 @@
 # Large binary files
 weights/
 outputs/
-data/
+/data/
 
 # Python
 __pycache__/
@@ -46,3 +46,8 @@ nohup.out
 *.bak
 *.log
 .ipynb_checkpoints/
+
+# Project assets (previews, metadata)
+assets/previews/
+data/metadata/*.xls
+data/metadata/*.xlsx

@@ -3,9 +3,9 @@
 
 Usage::
 
-    python scripts/train.py --config_dir configs --output_dir outputs/run_001
-    python scripts/train.py --resume_from outputs/run_001/checkpoints/last.ckpt
-    python scripts/train.py --multi_sequence --anatomies brain prostate
+    triage-train --config_dir configs --output_dir outputs/run_001
+    triage-train --resume_from outputs/run_001/checkpoints/last.ckpt
+    triage-train --multi_sequence --anatomies brain prostate
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 
-_project_root = Path(__file__).resolve().parent.parent
+_project_root = Path(__file__).resolve().parents[3]
 _src = _project_root / "src"
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
@@ -150,8 +150,13 @@ def main() -> None:
     except RuntimeError:
         pass
 
-    from triagemri.utils.logging import setup_logging
-    setup_logging(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("nibabel").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
 
     logger.info("Triage-MRI training started")
     logger.info("  config dir : %s", args.config_dir)
@@ -177,13 +182,8 @@ def main() -> None:
     pl.seed_everything(seed, workers=True)
     logger.info("  seed       : %d", seed)
 
-    from triagemri.utils.run_card import save_run_card
-
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    save_run_card(output_dir, config)
-    logger.info("  run card saved : %s/run_card.yaml", output_dir)
 
     logger.info("Building model...")
     try:
