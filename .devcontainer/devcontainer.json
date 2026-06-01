@@ -1,0 +1,30 @@
+{
+  "name": "Triage-MRI",
+  "image": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-toolsai.jupyter",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/bin/python",
+        "python.linting.enabled": true,
+        "ruff.lint.args": ["--config=pyproject.toml"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+  "postCreateCommand": "pip install -e '.[dev]'",
+  "runArgs": ["--gpus", "all"],
+  "mounts": [
+    "source=${localWorkspaceFolder}/data,target=/workspaces/triage-mri/data,type=bind",
+    "source=${localWorkspaceFolder}/weights,target=/workspaces/triage-mri/weights,type=bind",
+    "source=${localWorkspaceFolder}/outputs,target=/workspaces/triage-mri/outputs,type=bind"
+  ]
+}

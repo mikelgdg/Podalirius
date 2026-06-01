@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  train:
+    build: .
+    image: triage-mri:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+      - ./weights:/app/weights
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    command: python -m triagemri.cli.train --output_dir /app/outputs/run_docker
+
+  eval:
+    build: .
+    image: triage-mri:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+      - ./weights:/app/weights
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    command: python -m triagemri.cli.evaluate --checkpoint /app/outputs/run_002/checkpoints/last.ckpt
+
+  demo:
+    build: .
+    image: triage-mri:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/app/data
+      - ./weights:/app/weights
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    command: python -m triagemri.cli.demo --checkpoint /app/outputs/run_002/checkpoints/last.ckpt
+
+  api:
+    build: .
+    image: triage-mri:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./weights:/app/weights
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    command: python scripts/serve.py
