@@ -1,0 +1,16 @@
+model:
+  encoder:
+    name: "triad_swinb_simmim"
+    checkpoint: "weights/triad_swinb_simmim.pth"
+    embed_dim: 768
+    freeze_backbone: true
+    freeze_projection: false
+
+  mil:
+    attention_dim: 128
+    hidden_dim: 512
+    dropout: 0.3
+    pooling: "gated_attention"
+
+  anatomy_mode: "shared"
+  num_anatomies: 3

@@ -1,0 +1,37 @@
+training:
+  batch_size: 4
+  num_workers: 0
+  max_epochs: 100
+  deterministic: true
+
+  optimizer:
+    name: "adamw"
+    lr: 5.0e-4
+    weight_decay: 1.0e-3
+
+  scheduler:
+    name: "cosine_annealing"
+    warmup_epochs: 5
+    min_lr: 1.0e-6
+
+  loss:
+    name: "weighted_bce"
+
+  imbalance:
+    use_weighted_sampler: true
+
+  early_stopping:
+    monitor: "val/roc_auc"
+    patience: 15
+    mode: "max"
+
+  checkpoint:
+    monitor: "val/roc_auc"
+    mode: "max"
+    save_top_k: 3
+
+  precision: "16-mixed"
+  accelerator: "auto"
+  devices: 1
+
+  seed: 42

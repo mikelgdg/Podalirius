@@ -1,0 +1,39 @@
+data:
+  raw_dir: "data/raw"
+  volume_size: [96, 96, 96]
+
+  # ── planned: not yet wired ──────────────────────────────────────────
+  # processed_dir: "data/processed"        # PLANNED: preprocessed volume cache
+  # voxel_spacing: [1.0, 1.0, 1.0]         # PLANNED: resampling target
+  # intensity_percentiles: [0.5, 99.5]     # PLANNED: configurable norm range
+  # ─────────────────────────────────────────────────────────────────────
+
+  datasets:
+    brain:
+      brats:
+        path: "data/raw/brain/brats"
+        label_from: "segmentation_mask"
+      oasis:
+        path: "data/raw/brain/oasis"
+        label_from: "cdr"
+
+    prostate:
+      pi_cai:
+        path: "data/raw/prostate/pi_cai"
+        label_from: "clinically_significant"
+
+    breast:
+      mri_breast:
+        path: "data/raw/breast/advanced_mri"
+        label_from: "pathology"
+
+  split:
+    train_ratio: 0.70
+    val_ratio: 0.15
+    test_ratio: 0.15
+    seed: 42
+
+  balance:
+    # Limit BraTS cases to balance dataset. null = use all.
+    # Set to ~1400 for 50/50 with current normals, lower as HCP grows.
+    max_brats: 1400
