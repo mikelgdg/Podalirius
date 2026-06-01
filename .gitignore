@@ -3,7 +3,7 @@
 # Large binary files
 weights/
 outputs/
-data/
+/data/
 
 # Python
 __pycache__/
