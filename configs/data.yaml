@@ -1,0 +1,39 @@
+data:
+  raw_dir: "data/raw"
+  volume_size: [96, 96, 96]
+
+  datasets:
+    brain:
+      brats:
+        path: "data/raw/brain/brats"
+        label_from: "segmentation_mask"
+      oasis:
+        path: "data/raw/brain/oasis"
+        label_from: "cdr"
+      ixi:
+        path: "data/raw/brain/ixi"
+      hcp:
+        path: "data/raw/brain/hcp"
+
+    prostate:
+      pi_cai:
+        path: "data/raw/prostate/pi_cai"
+        label_from: "clinically_significant"
+
+    breast:
+      mri_breast:
+        path: "data/raw/breast/advanced_mri"
+        label_from: "pathology"
+
+  split:
+    train_ratio: 0.70
+    val_ratio: 0.15
+    test_ratio: 0.15
+    seed: 42
+
+  balance:
+    max_brats: 1400
+
+  multi_sequence:
+    enabled: false
+    input_sequences: ["t1ce"]
