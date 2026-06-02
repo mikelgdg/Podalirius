@@ -4,6 +4,7 @@ import warnings
 from typing import Dict, Optional, Tuple
 
 import numpy as np
+from sklearn.exceptions import UndefinedMetricWarning
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -12,6 +13,8 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
 )
+
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 
 def find_threshold_for_sensitivity(

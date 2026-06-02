@@ -76,6 +76,7 @@ class TriageLightningModule(pl.LightningModule):
         volume: torch.Tensor = batch["volume"]
         label: torch.Tensor = batch["label"].float()
         anatomy = batch.get("anatomy", None)
+        mask: Optional[torch.Tensor] = batch.get("mask", None)
 
         output = self.model(volume, anatomy)
         logits = output["logits"].squeeze(-1)
@@ -84,7 +85,7 @@ class TriageLightningModule(pl.LightningModule):
         if has_decoder and "heatmap" in output:
             heatmap = output["heatmap"]
             attention = output.get("attention")
-            loss = self.loss_fn(logits, label, heatmap=heatmap, attention=attention)
+            loss = self.loss_fn(logits, label, heatmap=heatmap, attention=attention, mask=mask)
         else:
             loss = self.loss_fn(logits, label)
 
@@ -124,6 +125,7 @@ class TriageLightningModule(pl.LightningModule):
         volume = batch["volume"]
         label: torch.Tensor = batch["label"].float()
         anatomy = batch.get("anatomy", None)
+        mask: Optional[torch.Tensor] = batch.get("mask", None)
 
         output = self.model(volume, anatomy)
         logits = output["logits"].squeeze(-1)
@@ -135,6 +137,7 @@ class TriageLightningModule(pl.LightningModule):
                 label,
                 heatmap=output["heatmap"],
                 attention=output.get("attention"),
+                mask=mask,
             )
         else:
             loss = self.loss_fn(logits, label)
@@ -241,7 +244,7 @@ class TriageLightningModule(pl.LightningModule):
         if self.warmup_epochs > 0:
             warmup = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
-                start_factor=0.0,
+                start_factor=1e-6,
                 total_iters=self.warmup_epochs,
             )
             scheduler = torch.optim.lr_scheduler.SequentialLR(

@@ -1,8 +1,8 @@
 training:
-  batch_size: 4
-  num_workers: 0
+  batch_size: 2
+  num_workers: 4
   max_epochs: 100
-  deterministic: true
+  deterministic: false
   gradient_accumulation_steps: 4
 
   optimizer:
@@ -17,7 +17,7 @@ training:
     min_lr: 1.0e-6
 
   loss:
-    name: "weighted_bce"
+    name: "multi_task"
 
   imbalance:
     use_weighted_sampler: true

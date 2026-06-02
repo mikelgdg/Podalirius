@@ -127,12 +127,12 @@ class PseudoLabelLoss(nn.Module):
             pos_regions = region_means[b][pos_mask[b]]
             neg_regions = region_means[b][neg_mask[b]]
             if pos_regions.numel() > 0:
-                loss = loss + F.binary_cross_entropy(
+                loss = loss + F.binary_cross_entropy_with_logits(
                     pos_regions, torch.ones_like(pos_regions), reduction="mean"
                 )
                 count += 1
             if neg_regions.numel() > 0:
-                loss = loss + F.binary_cross_entropy(
+                loss = loss + F.binary_cross_entropy_with_logits(
                     neg_regions, torch.zeros_like(neg_regions), reduction="mean"
                 )
                 count += 1
@@ -150,17 +150,16 @@ class PseudoLabelLoss(nn.Module):
 
 
 class MultiTaskLoss(nn.Module):
-    """Combined loss for global classification + voxel heatmap + pseudo-labels.
+    """Combined loss for global classification + voxel heatmap + GT mask supervision.
 
-    ``loss = λ_bce * BCE + λ_smooth * TV + λ_attn * KL(attn, pool(hm)) + λ_pseudo * PseudoLabel(hm, attn)``
+    ``loss = λ_bce * BCE + λ_smooth * TV + λ_attn * KL(attn, pool(hm)) + λ_mask * BCE(hm, mask) + λ_dice * Dice(hm, mask)``
 
     Args:
         lambda_bce: Weight for BCE on global score.
         lambda_smooth: Weight for TV smoothness on heatmap.
         lambda_attn: Weight for KL between MIL attention and pooled heatmap.
-        lambda_pseudo: Weight for instance-level pseudo-label supervision.
-        pseudo_pos_factor: Positive threshold factor for PseudoLabelLoss.
-        pseudo_neg_factor: Negative threshold factor for PseudoLabelLoss.
+        lambda_mask: Weight for BCEWithLogits on heatmap vs GT mask.
+        lambda_dice: Weight for soft Dice loss on heatmap vs GT mask.
     """
 
     def __init__(
@@ -168,19 +167,33 @@ class MultiTaskLoss(nn.Module):
         lambda_bce: float = 1.0,
         lambda_smooth: float = 0.1,
         lambda_attn: float = 0.05,
-        lambda_pseudo: float = 0.15,
-        pseudo_pos_factor: float = 2.0,
-        pseudo_neg_factor: float = 1.0,
+        lambda_mask: float = 0.5,
+        lambda_dice: float = 0.5,
     ):
         super().__init__()
         self.lambda_bce = lambda_bce
         self.lambda_smooth = lambda_smooth
         self.lambda_attn = lambda_attn
-        self.lambda_pseudo = lambda_pseudo
-        self.pseudo_loss = PseudoLabelLoss(
-            pos_factor=pseudo_pos_factor,
-            neg_factor=pseudo_neg_factor,
-        )
+        self.lambda_mask = lambda_mask
+        self.lambda_dice = lambda_dice
+
+    @staticmethod
+    def _soft_dice_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Soft Dice loss for 3D volumes.
+
+        Args:
+            pred: ``(B, 1, D, H, W)`` logits.
+            target: ``(B, 1, D, H, W)`` binary mask.
+
+        Returns:
+            Scalar loss (1 - Dice).
+        """
+        probs = torch.sigmoid(pred)
+        smooth = 1.0
+        intersection = (probs * target).sum(dim=(2, 3, 4))
+        union = probs.sum(dim=(2, 3, 4)) + target.sum(dim=(2, 3, 4))
+        dice = (2.0 * intersection + smooth) / (union + smooth)
+        return (1.0 - dice).mean()
 
     def forward(
         self,
@@ -188,6 +201,7 @@ class MultiTaskLoss(nn.Module):
         targets: torch.Tensor,
         heatmap: Optional[torch.Tensor] = None,
         attention: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         targets = targets.float().view_as(logits)
         loss_bce = F.binary_cross_entropy_with_logits(logits, targets)
@@ -206,7 +220,6 @@ class MultiTaskLoss(nn.Module):
             if side ** 3 == N:
                 target_size = (side, side, side)
             elif N > 30:
-                # Multi-scale: extract coarsest scale (last cubic chunk)
                 for small_side in range(2, 8):
                     small_n = small_side ** 3
                     if small_n < N and (N - small_n) > 0:
@@ -228,13 +241,14 @@ class MultiTaskLoss(nn.Module):
             loss_attn = attn_kl.mean()
             total = total + self.lambda_attn * loss_attn
 
-        if (
-            heatmap is not None
-            and attention is not None
-            and self.lambda_pseudo > 0
-        ):
-            loss_pseudo = self.pseudo_loss(heatmap, attention)
-            total = total + self.lambda_pseudo * loss_pseudo
+        if heatmap is not None and mask is not None:
+            if mask.min() >= 0.0:
+                if self.lambda_mask > 0:
+                    loss_mask = F.binary_cross_entropy_with_logits(heatmap, mask)
+                    total = total + self.lambda_mask * loss_mask
+                if self.lambda_dice > 0:
+                    loss_dice = self._soft_dice_loss(heatmap, mask)
+                    total = total + self.lambda_dice * loss_dice
 
         return total
 

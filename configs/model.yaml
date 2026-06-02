@@ -8,7 +8,7 @@ model:
     freeze_patch_embed: true
     pretrained_strict: false
     lora:
-      enabled: false
+      enabled: true
       r: 4
       alpha: 1.0
       dropout: 0.0
@@ -18,10 +18,10 @@ model:
     hidden_dim: 512
     dropout: 0.15
     pooling: "gated_attention"
-    multi_scale: false
+    multi_scale: true
 
   decoder:
-    enabled: false
+    enabled: true
     upconv_channels: [256, 128, 64, 32, 16]
     attention_gates: true
     dropout: 0.1

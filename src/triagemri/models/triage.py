@@ -38,7 +38,7 @@ class TriageModel(nn.Module):
 
     Input:  ``(B, C, D, H, W)`` raw MRI volume (C=1 for single-sequence).
     Output: dict with ``score``, ``logits``, ``attention``, ``features``,
-        and optionally ``heatmap``.
+    and optionally ``heatmap``.
 
     Args:
         encoder: :class:`TriadEncoder` instance.

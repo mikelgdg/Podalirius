@@ -40,11 +40,11 @@ def get_train_transforms(
     Returns:
         A MONAI ``Compose`` pipeline.
     """
-    keys = ("volume",)
+    keys = ("volume", "mask")
 
     transforms = [
-        RandFlipd(keys=keys, spatial_axis=0, prob=0.5),
-        RandFlipd(keys=keys, spatial_axis=1, prob=0.5),
+        RandFlipd(keys=keys, spatial_axis=0, prob=0.5, allow_missing_keys=True),
+        RandFlipd(keys=keys, spatial_axis=1, prob=0.5, allow_missing_keys=True),
         RandAffined(
             keys=keys,
             spatial_size=(96, 96, 96),
@@ -52,24 +52,26 @@ def get_train_transforms(
             scale_range=(0.85, 1.15),
             translate_range=(5.0, 5.0, 5.0),
             prob=0.7,
-            mode="bilinear",
+            mode=("bilinear", "nearest"),
             padding_mode="zeros",
+            allow_missing_keys=True,
         ),
         Rand3DElasticd(
             keys=keys,
             sigma_range=(5.0, 8.0),
             magnitude_range=(20.0, 40.0),
             prob=0.4,
-            mode="bilinear",
+            mode=("bilinear", "nearest"),
             padding_mode="zeros",
+            allow_missing_keys=True,
         ),
-        RandBiasFieldd(keys=keys, coeff_range=(0.0, 0.15), prob=0.3),
-        RandScaleIntensityd(keys=keys, factors=0.1, prob=0.5),
-        RandShiftIntensityd(keys=keys, offsets=intensity_jitter / 2.0, prob=0.5),
-        ScaleIntensityd(keys=keys, minv=0.0, maxv=1.0),
-        RandGaussianNoised(keys=keys, std=0.01, prob=0.5),
-        RandAdjustContrastd(keys=keys, gamma=(0.8, 1.2), prob=0.5),
-        EnsureTyped(keys=keys, dtype=torch.float32),
+        RandBiasFieldd(keys=("volume",), coeff_range=(0.0, 0.15), prob=0.3),
+        RandScaleIntensityd(keys=("volume",), factors=0.1, prob=0.5),
+        RandShiftIntensityd(keys=("volume",), offsets=intensity_jitter / 2.0, prob=0.5),
+        ScaleIntensityd(keys=("volume",), minv=0.0, maxv=1.0),
+        RandGaussianNoised(keys=("volume",), std=0.01, prob=0.5),
+        RandAdjustContrastd(keys=("volume",), gamma=(0.8, 1.2), prob=0.5),
+        EnsureTyped(keys=("volume", "mask"), dtype=torch.float32, allow_missing_keys=True),
     ]
 
     return Compose(transforms)
@@ -86,8 +88,8 @@ def get_val_transforms(multi_sequence: bool = False) -> Compose:
     Returns:
         A MONAI ``Compose`` pipeline.
     """
-    keys = ("volume",)
+    keys = ("volume", "mask")
 
     return Compose([
-        EnsureTyped(keys=keys, dtype=torch.float32),
+        EnsureTyped(keys=keys, dtype=torch.float32, allow_missing_keys=True),
     ])
