@@ -1,4 +1,0 @@
-El run actual es run_002. Va por la epoch 08 (last.ckpt ya existe).
-python scripts/train.py --resume_from outputs/run_002/checkpoints/last.ckpt
-No hace falta el --output_dir ni --config_dir al reanudar — Lightning lo restaura del checkpoint automáticamente. Si quieres ser explícito igual:
-python scripts/train.py --config_dir configs --output_dir outputs/run_002 --resume_from outputs/run_002/checkpoints/last.ckpt

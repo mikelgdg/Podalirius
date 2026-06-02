@@ -47,6 +47,16 @@ nohup.out
 *.log
 .ipynb_checkpoints/
 
+# Generated HTML
+*.html
+
+# Sphinx build artefacts
+docs/_build/
+
+# Dead / scratch directories
+TEMPORAL/
+scripts/__pycache__/
+
 # Project assets (previews, metadata)
 assets/previews/
 data/metadata/*.xls
