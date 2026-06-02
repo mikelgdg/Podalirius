@@ -1,0 +1,15 @@
+/* Triage-MRI custom styles */
+:root {
+    --triage-primary: #2563eb;
+    --triage-normal: #16a34a;
+    --triage-revisar: #dc2626;
+    --triage-inconclusive: #f59e0b;
+}
+
+.sig-name {
+    font-weight: 700;
+}
+
+code.literal {
+    color: var(--triage-primary);
+}
