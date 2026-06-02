@@ -43,6 +43,9 @@ class TriageLightningModule(pl.LightningModule):
         self.lr: float = float(config.training.optimizer.lr)
         self.weight_decay: float = float(config.training.optimizer.weight_decay)
         self.warmup_epochs: int = int(config.training.scheduler.warmup_epochs)
+        self.decoder_warmup_epochs: int = int(
+            config.training.get("decoder_warmup_epochs", 0)
+        )
         self.min_lr: float = float(config.training.scheduler.min_lr)
         self.max_epochs: int = int(config.training.max_epochs)
         self.exclude_bias_decay: bool = config.training.optimizer.get(
@@ -82,9 +85,11 @@ class TriageLightningModule(pl.LightningModule):
         logits = output["logits"].squeeze(-1)
 
         has_decoder = hasattr(self.model, "decoder") and self.model.decoder is not None
-        if has_decoder and "heatmap" in output:
+        in_warmup = self.current_epoch < self.decoder_warmup_epochs
+        if has_decoder and "heatmap" in output and not in_warmup:
             heatmap = output["heatmap"]
             attention = output.get("attention")
+            mask = batch.get("mask", None)
             loss = self.loss_fn(logits, label, heatmap=heatmap, attention=attention, mask=mask)
         else:
             loss = self.loss_fn(logits, label)
