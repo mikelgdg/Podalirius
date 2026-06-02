@@ -27,6 +27,7 @@ from triagemri.data.labels import (
 from triagemri.data.preprocessing import (
     load_and_preprocess,
     load_and_preprocess_multi,
+    load_mask,
     validate_file,
     validate_volume,
 )
@@ -249,6 +250,9 @@ class BrainMRIDataset(Dataset):
                     skipped_corrupt += 1
                     continue
 
+                seg_files = sorted(case_dir.glob("*seg*.nii.gz"))
+                mask_path = seg_files[0] if seg_files else None
+
                 cases.append(
                     {
                         "case_id": case_dir.name,
@@ -258,6 +262,7 @@ class BrainMRIDataset(Dataset):
                         "patient_id": case_dir.name,
                         "source": "brats",
                         "preferred_sequence": "t1ce",
+                        "mask_path": mask_path,
                     }
                 )
             except Exception:
@@ -332,6 +337,7 @@ class BrainMRIDataset(Dataset):
                         "patient_id": patient_id,
                         "source": "oasis",
                         "preferred_sequence": "t1",
+                        "mask_path": None,
                     }
                 )
             except Exception:
@@ -386,6 +392,7 @@ class BrainMRIDataset(Dataset):
                     "patient_id": pid,
                     "source": "ixi",
                     "preferred_sequence": "t1",
+                    "mask_path": None,
                 }
             )
 
@@ -409,6 +416,7 @@ class BrainMRIDataset(Dataset):
                     "patient_id": pid,
                     "source": "hcp",
                     "preferred_sequence": "t1",
+                    "mask_path": None,
                 }
             )
 
@@ -628,6 +636,12 @@ class BrainMRIDataset(Dataset):
             "source": case["source"],
         }
 
+        mask_path = case.get("mask_path")
+        mask = load_mask(mask_path)
+        if case["label"] == 1 and mask_path is None:
+            mask.fill_(-1.0)
+        item["mask"] = mask
+
         if self.transform is not None:
             item = self.transform(item)
 
@@ -676,8 +690,8 @@ class ProstateMRIDataset(Dataset):
                 └── marksheet.csv
 
     Returns:
-        ``{"volume": (1,96,96,96), "label": 0/1, "anatomy": "prostate",
-          "patient_id": str, "source": "picai"}``
+        Dict with keys ``volume``, ``label``, ``anatomy``, ``patient_id``, ``source``.
+        Volume shape is ``(1, 96, 96, 96)``, label is 0 or 1.
     """
 
     _case_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -762,6 +776,20 @@ class ProstateMRIDataset(Dataset):
             if label == -1:
                 continue
 
+            mask_path = None
+            if label == 1:
+                lesion_dir = (
+                    self.data_root.parent
+                    / "picai_labels"
+                    / "csPCa_lesion_delineations"
+                    / "human_expert"
+                    / "resampled"
+                )
+                if lesion_dir.is_dir():
+                    candidates = sorted(lesion_dir.glob(f"*_{study_id}.nii.gz"))
+                    if candidates:
+                        mask_path = candidates[0]
+
             cases.append(
                 {
                     "case_id": study_id,
@@ -771,6 +799,7 @@ class ProstateMRIDataset(Dataset):
                     "patient_id": study_id,
                     "source": "picai",
                     "preferred_sequence": self.preferred_sequence,
+                    "mask_path": mask_path,
                 }
             )
 
@@ -825,6 +854,12 @@ class ProstateMRIDataset(Dataset):
             "patient_id": case["patient_id"],
             "source": case["source"],
         }
+
+        mask_path = case.get("mask_path")
+        mask = load_mask(mask_path)
+        if case["label"] == 1 and mask_path is None:
+            mask.fill_(-1.0)
+        item["mask"] = mask
 
         if self.transform is not None:
             item = self.transform(item)
