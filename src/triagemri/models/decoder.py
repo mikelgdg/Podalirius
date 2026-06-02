@@ -141,7 +141,6 @@ class AnomalyDecoder(nn.Module):
             x = block(x, skip)
 
         heatmap = self.final(x)
-        heatmap = torch.sigmoid(heatmap)
         return heatmap
 
 

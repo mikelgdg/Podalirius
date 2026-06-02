@@ -265,6 +265,10 @@ def load_full_volume_for_display(
 ) -> Tuple[torch.Tensor, Tuple[int, int, int], Tuple[int, int, int]]:
     """Load and resize a volume to 96³ for display, preserving the full FOV.
 
+    Reorients NIfTI volumes to RAS+ canonical before processing so that
+    the displayed anatomy is always in standard radiological convention
+    regardless of the file's native storage orientation.
+
     Returns the display volume, the crop offsets and the crop extent
     (both in 96³ display coordinates).  This allows repositioning the
     model's attention heatmap at the correct scale and location on the
@@ -274,15 +278,29 @@ def load_full_volume_for_display(
         path: Path to NIfTI / MHA file.
 
     Returns:
-        volume_display: Tensor of shape (96, 96, 96), float32, [0, 1].
-        crop_offsets: (d0, h0, w0) in display coordinates.
-        crop_shape: (d_sz, h_sz, w_sz) extent in display coordinates.
+        volume_display: Tensor of shape ``(1, 96, 96, 96)``, float32, [0, 1].
+        crop_offsets: ``(d0, h0, w0)`` in display coordinates.
+        crop_shape: ``(d_sz, h_sz, w_sz)`` extent in display coordinates.
     """
+    import nibabel as nib
     import torch.nn.functional as F
 
-    data, _affine = load_nifti(str(path))
-    orig_shape = data.shape
-    W_orig, H_orig, D_orig = orig_shape[0], orig_shape[1], orig_shape[2]
+    str_path = str(path)
+
+    if str_path.lower().endswith(".mha"):
+        data, _affine = _load_mha(str_path)
+    else:
+        img = nib.load(str_path)
+        canonical = nib.as_closest_canonical(img)
+        data = np.asarray(canonical.dataobj, dtype=np.float32)
+        while data.ndim > 3 and data.shape[-1] == 1:
+            data = data.squeeze(-1)
+        if data.ndim == 4:
+            data = data[..., 0]
+        data = torch.from_numpy(data)
+
+    orig_shape = list(data.shape)
+    D_orig, H_orig, W_orig = orig_shape[0], orig_shape[1], orig_shape[2]
     volume = normalize_intensity(data)
 
     d0_orig = max(0, (D_orig - 96) // 2)
@@ -294,12 +312,13 @@ def load_full_volume_for_display(
     w_sz_orig = min(96, W_orig)
 
     if volume.dim() == 3:
-        volume = volume.unsqueeze(0).unsqueeze(0).permute(0, 1, 4, 3, 2)
+        volume = volume.unsqueeze(0).unsqueeze(0)
     elif volume.dim() == 4:
-        volume = volume.unsqueeze(0).permute(0, 1, 4, 3, 2)
+        volume = volume.unsqueeze(0)
 
-    volume = F.interpolate(volume, size=(96, 96, 96), mode="trilinear", align_corners=False)
-    volume = volume.permute(0, 1, 4, 3, 2)
+    volume = F.interpolate(
+        volume, size=(96, 96, 96), mode="trilinear", align_corners=False
+    )
     volume = volume.squeeze(0)
 
     sc_d = 96.0 / D_orig if D_orig > 0 else 1.0
@@ -314,3 +333,30 @@ def load_full_volume_for_display(
     w_sz = int(w_sz_orig * sc_w)
 
     return volume.to(torch.float32), (d0, h0, w0), (d_sz, h_sz, w_sz)
+
+
+def load_mask(
+    path: Optional[str | Path],
+    target_shape: Tuple[int, int, int] = (96, 96, 96),
+) -> torch.Tensor:
+    """Load a binary segmentation mask and resample to *target_shape*.
+
+    For normal cases without a mask file, returns an all-zeros tensor.
+
+    Args:
+        path: Path to a NIfTI / MHA mask, or ``None`` for blanks.
+        target_shape: ``(D, H, W)`` output shape.
+
+    Returns:
+        Float32 tensor of shape ``(1, *target_shape)`` with values in {0, 1}.
+    """
+    if path is None:
+        return torch.zeros(1, *target_shape, dtype=torch.float32)
+
+    data, _affine = load_nifti(str(path))
+    tensor = torch.as_tensor(np.asarray(data, dtype=np.float32))
+    mask = (tensor > 0).float()
+    mask = crop_or_pad(mask, target_shape=target_shape)
+    if mask.dim() == 3:
+        mask = mask.unsqueeze(0)
+    return mask

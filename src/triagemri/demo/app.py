@@ -59,9 +59,9 @@ def _get_center_slice(
     d, h, w = v.shape
 
     if axis == "axial":
-        img = v[d // 2, :, :]
-    elif axis == "sagittal":
         img = v[:, :, w // 2]
+    elif axis == "sagittal":
+        img = v[d // 2, :, :]
     elif axis == "coronal":
         img = v[:, h // 2, :]
     else:
@@ -151,7 +151,7 @@ def _predict_single(
     heatmap_3d = None
 
     if "heatmap" in output:
-        hm = output["heatmap"].cpu().numpy()
+        hm = torch.sigmoid(output["heatmap"]).cpu().numpy()
         heatmap_3d = hm[0, 0]
 
     if "attention" in output:
@@ -398,9 +398,9 @@ def _build_3d_mesh(
 
     return {
         "type": "mesh3d",
-        "x": verts[:, 2].tolist(),
+        "x": verts[:, 0].tolist(),
         "y": verts[:, 1].tolist(),
-        "z": verts[:, 0].tolist(),
+        "z": verts[:, 2].tolist(),
         "i": faces[:, 0].tolist(),
         "j": faces[:, 1].tolist(),
         "k": faces[:, 2].tolist(),
@@ -421,9 +421,9 @@ def _draw_grid_wireframe(traces, x0, y0, z0, x_sz, y_sz, z_sz, grid_side=3):
         for y in ys:
             traces.append(
                 go.Scatter3d(
-                    x=[z0, z0 + z_sz],
+                    x=[x, x],
                     y=[y, y],
-                    z=[x, x],
+                    z=[z0, z0 + z_sz],
                     mode="lines",
                     line=line_style,
                     showlegend=False,
@@ -433,9 +433,9 @@ def _draw_grid_wireframe(traces, x0, y0, z0, x_sz, y_sz, z_sz, grid_side=3):
         for z in zs:
             traces.append(
                 go.Scatter3d(
-                    x=[z, z],
+                    x=[x, x],
                     y=[y0, y0 + y_sz],
-                    z=[x, x],
+                    z=[z, z],
                     mode="lines",
                     line=line_style,
                     showlegend=False,
@@ -445,9 +445,9 @@ def _draw_grid_wireframe(traces, x0, y0, z0, x_sz, y_sz, z_sz, grid_side=3):
         for z in zs:
             traces.append(
                 go.Scatter3d(
-                    x=[z, z],
+                    x=[x0, x0 + x_sz],
                     y=[y, y],
-                    z=[x0, x0 + x_sz],
+                    z=[z, z],
                     mode="lines",
                     line=line_style,
                     showlegend=False,
