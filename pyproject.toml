@@ -36,6 +36,13 @@ dev = [
     "black>=23.0",
     "pre-commit>=3.0",
 ]
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024",
+    "myst-parser>=3.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.5",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

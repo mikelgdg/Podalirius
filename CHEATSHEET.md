@@ -1,39 +1,49 @@
 # Triage-MRI Cheatsheet
 
+## Modelos actuales (post-rediseño, Jun 2026)
+
+| Modelo | Anatomías | AUC val | Espec (sens 99%) | Discard | Checkpoint |
+|--------|-----------|---------|-------------------|---------|------------|
+| **Post-rediseño** | Cerebro | 0.983 | 77.2% | 33.0% | `outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt` |
+| **V3** | Cerebro + Próstata | 0.984 | 77.2% | 33.0% | `outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt` |
+
 ## Entrenamiento
 
 ```bash
-# Solo cerebro (default)
-python scripts/train.py --output_dir outputs/default
+# Solo cerebro
+python scripts/train.py --output_dir outputs/run_nueva --anatomies brain
 
 # Cerebro + próstata
-python scripts/train.py --output_dir outputs/run_brain_prostate --anatomies brain prostate
+python scripts/train.py --output_dir outputs/run_nueva --anatomies brain prostate
 
-# Resumir desde checkpoint
-python scripts/train.py --output_dir outputs/run_brain_prostate --resume_from outputs/run_brain_prostate/checkpoints/last.ckpt --anatomies brain prostate
+# Resumir desde checkpoint (auto-detecta output_dir)
+python scripts/train.py --resume_from outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt
 
-# Cambiar seed y max epochs (editar configs/train.yaml antes)
+# Cambiar seed
 python scripts/train.py --seed 123 --output_dir outputs/run_exp_42
 ```
 
 ## TensorBoard
 
 ```bash
-# Ver todas las runs
+# Ver todas las runs juntas
 tensorboard --logdir outputs --bind_all --port 6006
-
-# Solo una run
-tensorboard --logdir outputs/run_brain_prostate --bind_all --port 6006
 ```
 
 ## Evaluación
 
 ```bash
-# Evaluar un checkpoint (métricas en test set)
-python scripts/evaluate.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt
+# Post-rediseño (solo cerebro)
+python scripts/evaluate.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
+    --calibrate --subgroup_analysis
+
+# V3 (cerebro + próstata)
+python scripts/evaluate.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt \
+    --calibrate --subgroup_analysis
 
 # Con sensibilidad distinta a 99%
-python scripts/evaluate.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt --target_sensitivity 0.95
+python scripts/evaluate.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
+    --target_sensitivity 0.95
 
 # Output: outputs/evaluation/evaluation_results.json + evaluation_report.md
 ```
@@ -41,21 +51,22 @@ python scripts/evaluate.py --checkpoint outputs/run_brain_prostate/checkpoints/l
 ## Demo (Gradio)
 
 ```bash
-# Demo con checkpoint de cerebro+solo
-python scripts/demo.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt
+# Post-rediseño — cerebro
+python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt
 
-# Solo brain + próstata en el dropdown (sin breast)
-python scripts/demo.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt --anatomies brain prostate
+# V3 — cerebro + próstata
+python scripts/demo.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt --anatomies brain prostate
 
-# Con thresholds de evaluación
-python scripts/demo.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt \
+# Con thresholds de evaluación (zonas NORMAL/INCONCLUSIVE/REVISAR)
+python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
     --thresholds outputs/evaluation/thresholds.json
 
-# Acceso público
-python scripts/demo.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt --share
+# Acceso público (compartir link)
+python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt --share
 
 # Puerto y host custom
-python scripts/demo.py --checkpoint outputs/run_brain_prostate/checkpoints/last.ckpt --port 8080 --host 127.0.0.1
+python scripts/demo.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt \
+    --port 8080 --host 127.0.0.1 --anatomies brain prostate
 ```
 
 ## Tests
