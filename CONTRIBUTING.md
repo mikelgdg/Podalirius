@@ -28,7 +28,7 @@ pytest tests/
 
 ## Pull Request Process
 
-1. Create a feature branch from `main`:
+1. Create a feature branch from `dev`:
    ```bash
    git checkout -b feature/your-feature-name
    ```

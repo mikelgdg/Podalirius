@@ -40,10 +40,10 @@ triage-mri/
 │   ├── evaluation/    # Evaluador multi-anatomía
 │   └── demo/          # Interfaz Gradio
 ├── scripts/           # Scripts ejecutables (train, eval, demo, downloads)
-├── tests/             # Tests unitarios (48 tests)
+├── tests/             # Tests unitarios
 ├── docs/              # Documentación y planificación
-└── notebooks/         # Jupyter notebooks
 ```
+(Continúa en docs/evolucion_proyecto.md para la crónica completa del desarrollo)
 
 ## Arquitectura
 

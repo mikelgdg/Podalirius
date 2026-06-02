@@ -22,8 +22,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install gdown
           pip install -e ".[dev]"
+      - name: Download Triad weights
+        run: |
+          mkdir -p weights
+          gdown --id 1icLjmSpTdEAA9kEW3BWHnAYv-hsXMYxS -O weights/triad_swinb_simmim.pth
+          ls -lh weights/triad_swinb_simmim.pth
       - name: Lint with ruff
         run: python -m ruff check src/
       - name: Test with pytest
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --timeout=60
