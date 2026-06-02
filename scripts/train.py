@@ -155,7 +155,6 @@ def main() -> None:
 
     logger.info("Triage-MRI training started")
     logger.info("  config dir : %s", args.config_dir)
-    logger.info("  output dir : %s", args.output_dir)
     logger.info("  device     : %s", args.device)
 
     try:
@@ -180,6 +179,16 @@ def main() -> None:
     from triagemri.utils.run_card import save_run_card
 
     output_dir = Path(args.output_dir).resolve()
+    if args.resume_from:
+        ckpt_path = Path(args.resume_from).resolve()
+        if ckpt_path.parent.name == "checkpoints" and ckpt_path.parent.parent != output_dir:
+            # Auto-detect output_dir from checkpoint path
+            output_dir = ckpt_path.parent.parent
+            logger.info("  output dir (auto from checkpoint) : %s", output_dir)
+        else:
+            logger.info("  output dir : %s", output_dir)
+    else:
+        logger.info("  output dir : %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     save_run_card(output_dir, config)
@@ -196,13 +205,33 @@ def main() -> None:
     trainable_params = sum(
         p.numel() for p in model.parameters() if p.requires_grad
     )
-    encoder_frozen = not any(
-        p.requires_grad for p in model.encoder.parameters()
+    backbone_params = sum(
+        p.numel() for p in model.encoder.swin.parameters()
+    )
+    backbone_trainable = sum(
+        p.numel() for p in model.encoder.swin.parameters() if p.requires_grad
+    )
+    proj_params = sum(
+        p.numel() for p in model.encoder.stage_projections.parameters()
+    )
+    proj_trainable = sum(
+        p.numel() for p in model.encoder.stage_projections.parameters() if p.requires_grad
     )
 
     logger.info("  total params     : %s", f"{total_params:,}")
     logger.info("  trainable params : %s", f"{trainable_params:,}")
-    logger.info("  encoder frozen   : %s", encoder_frozen)
+    logger.info(
+        "  backbone frozen : %s (%s/%s params frozen)",
+        backbone_trainable == 0,
+        f"{backbone_params - backbone_trainable:,}",
+        f"{backbone_params:,}",
+    )
+    logger.info(
+        "  projections frozen : %s (%s/%s params frozen)",
+        proj_trainable == 0,
+        f"{proj_params - proj_trainable:,}",
+        f"{proj_params:,}",
+    )
 
     if args.resume_from is not None and args.anatomies is not None:
         try:

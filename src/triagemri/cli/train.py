@@ -88,6 +88,12 @@ def _parse_args() -> argparse.Namespace:
         help="Enable multi-sequence input mode.",
     )
     parser.add_argument(
+        "--max_epochs",
+        type=int,
+        default=None,
+        help="Override max_epochs from config.",
+    )
+    parser.add_argument(
         "--logger",
         choices=["tensorboard", "wandb"],
         default="tensorboard",
@@ -175,6 +181,10 @@ def main() -> None:
             config.data.multi_sequence.enabled = args.multi_sequence
         except Exception:
             logger.warning("Could not set multi_sequence in config; using YAML default.")
+
+    if args.max_epochs is not None:
+        config.training.max_epochs = args.max_epochs
+        logger.info("  max_epochs overridden to: %d", args.max_epochs)
 
     seed: int = (
         args.seed if args.seed is not None else int(config.training.get("seed", 42))
@@ -284,7 +294,7 @@ def main() -> None:
         devices=int(config.training.devices),
         precision=str(config.training.precision),
         accumulate_grad_batches=int(config.training.get("gradient_accumulation_steps", 1)),
-        deterministic=bool(config.training.get("deterministic", False)),
+        deterministic=config.training.get("deterministic", False),
         callbacks=[checkpoint_callback, early_stop_callback, lr_monitor],
         logger=pl_logger,
         log_every_n_steps=10,
