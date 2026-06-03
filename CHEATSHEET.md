@@ -1,11 +1,12 @@
-# Triage-MRI Cheatsheet
+# Triage-MRI — Podalirius Cheatsheet
 
-## Modelos actuales (post-rediseño, Jun 2026)
+## Modelos validados
 
-| Modelo | Anatomías | AUC val | Espec (sens 99%) | Discard | Checkpoint |
-|--------|-----------|---------|-------------------|---------|------------|
-| **Post-rediseño** | Cerebro | 0.983 | 77.2% | 33.0% | `outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt` |
-| **V3** | Cerebro + Próstata | 0.984 | 77.2% | 33.0% | `outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt` |
+| Modelo | Modo | Anatomías | AUC test | Espec (sens 99%) | Discard | Checkpoint |
+|--------|------|-----------|----------|-------------------|---------|------------|
+| **V3** | Clasificación | Cerebro + Próstata | 0.983 | 79.8% | 33.0% | `outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt` |
+| **V7** | Clasificación (multi-scale+LoRA) | Cerebro + Próstata | entrenando | — | — | `outputs/V7_BRAIN_PROSTATE/checkpoints/last.ckpt` |
+| **V8** | Segmentación (decoder) | Cerebro + Próstata | pendiente | — | — | `outputs/V8_SEGMENTATION/checkpoints/last.ckpt` |
 
 ## Entrenamiento
 
@@ -33,17 +34,9 @@ tensorboard --logdir outputs --bind_all --port 6006
 ## Evaluación
 
 ```bash
-# Post-rediseño (solo cerebro)
-python scripts/evaluate.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
-    --calibrate --subgroup_analysis
-
-# V3 (cerebro + próstata)
+# V3 — clasificación (AUC test 0.983)
 python scripts/evaluate.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt \
     --calibrate --subgroup_analysis
-
-# Con sensibilidad distinta a 99%
-python scripts/evaluate.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
-    --target_sensitivity 0.95
 
 # Output: outputs/evaluation/evaluation_results.json + evaluation_report.md
 ```
@@ -51,21 +44,23 @@ python scripts/evaluate.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/che
 ## Demo (Gradio)
 
 ```bash
-# Post-rediseño — cerebro
-python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt
-
-# V3 — cerebro + próstata
+# Clasificador solo
 python scripts/demo.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt --anatomies brain prostate
 
-# Con thresholds de evaluación (zonas NORMAL/INCONCLUSIVE/REVISAR)
-python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt \
-    --thresholds outputs/evaluation/thresholds.json
+# Pipeline A+B: clasificador + segmentador (heatmaps de alta resolución)
+python scripts/demo.py \
+    --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt \
+    --seg_checkpoint outputs/V8_SEGMENTATION/checkpoints/last.ckpt \
+    --anatomies brain prostate
 
-# Acceso público (compartir link)
-python scripts/demo.py --checkpoint outputs/PRIMERA_PRUEBA_POST_REDISENO/checkpoints/last.ckpt --share
-
-# Puerto y host custom
+# Con thresholds de evaluación y acceso público
 python scripts/demo.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt \
+    --seg_checkpoint outputs/V8_SEGMENTATION/checkpoints/last.ckpt \
+    --thresholds outputs/evaluation/thresholds.json --share
+
+# Puerto custom
+python scripts/demo.py --checkpoint outputs/BRAIN_PROSTATE_V3/checkpoints/last.ckpt --port 8080
+```
     --port 8080 --host 127.0.0.1 --anatomies brain prostate
 ```
 

@@ -253,6 +253,46 @@ class MultiTaskLoss(nn.Module):
         return total
 
 
+class SegmentationLoss(nn.Module):
+    """Binary cross-entropy + soft Dice loss for heatmap vs GT mask.
+
+    Pure segmentation loss — no classification, no KL, no TV.
+    Used for training the standalone :class:`~triagemri.models.segmentation.SegmentationModel`.
+
+    ``loss = λ_bce * BCEWithLogits(heatmap, mask) + λ_dice * (1 - Dice(σ(heatmap), mask))``
+
+    Args:
+        lambda_bce: Weight for BCE loss.
+        lambda_dice: Weight for Dice loss.
+    """
+
+    def __init__(self, lambda_bce: float = 1.0, lambda_dice: float = 1.0) -> None:
+        super().__init__()
+        self.lambda_bce = lambda_bce
+        self.lambda_dice = lambda_dice
+
+    @staticmethod
+    def _soft_dice_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        probs = torch.sigmoid(pred)
+        smooth = 1.0
+        intersection = (probs * target).sum(dim=(2, 3, 4))
+        union = probs.sum(dim=(2, 3, 4)) + target.sum(dim=(2, 3, 4))
+        dice = (2.0 * intersection + smooth) / (union + smooth)
+        return (1.0 - dice).mean()
+
+    def forward(
+        self, heatmap: torch.Tensor, mask: torch.Tensor
+    ) -> torch.Tensor:
+        loss = torch.tensor(0.0, device=heatmap.device)
+        if self.lambda_bce > 0:
+            loss = loss + self.lambda_bce * F.binary_cross_entropy_with_logits(
+                heatmap, mask
+            )
+        if self.lambda_dice > 0:
+            loss = loss + self.lambda_dice * self._soft_dice_loss(heatmap, mask)
+        return loss
+
+
 LOSS_REGISTRY = {
     "focal_loss": FocalLoss,
     "focal": FocalLoss,
@@ -260,6 +300,7 @@ LOSS_REGISTRY = {
     "asymmetric": AsymmetricLoss,
     "asl": AsymmetricLoss,
     "multi_task": MultiTaskLoss,
+    "segmentation": SegmentationLoss,
 }
 
 

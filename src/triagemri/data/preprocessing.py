@@ -292,7 +292,7 @@ def load_full_volume_for_display(
     else:
         img = nib.load(str_path)
         canonical = nib.as_closest_canonical(img)
-        data = np.asarray(canonical.dataobj, dtype=np.float32)
+        data = np.asarray(canonical.dataobj, dtype=np.float32).copy()
         while data.ndim > 3 and data.shape[-1] == 1:
             data = data.squeeze(-1)
         if data.ndim == 4:

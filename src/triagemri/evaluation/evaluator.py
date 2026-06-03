@@ -55,7 +55,7 @@ class TriageEvaluator:
     # ------------------------------------------------------------------
 
     def evaluate(
-        self, dataloader: DataLoader
+        self, dataloader: DataLoader, desc: str = "Evaluating"
     ) -> Tuple[np.ndarray, np.ndarray, List[str], List[Dict[str, Any]]]:
         """Run inference on an entire dataset.
 
@@ -127,7 +127,13 @@ class TriageEvaluator:
 
         with torch.no_grad():
             _consume_batch(first_batch)
-            for batch in data_iter:
+            total = len(dataloader)
+            try:
+                from tqdm import tqdm
+                pbar = tqdm(data_iter, total=total - 1, desc=desc, unit="batch")
+            except ImportError:
+                pbar = data_iter
+            for batch in pbar:
                 _consume_batch(batch)
 
         y_true = np.array(all_labels, dtype=np.float32)
@@ -241,14 +247,14 @@ class TriageEvaluator:
         Returns:
             Full results dict.
         """
-        y_true, y_scores, anatomies, metadata = self.evaluate(test_loader)
+        y_true, y_scores, anatomies, metadata = self.evaluate(test_loader, desc="Test set")
 
         per_anatomy_metrics = self._compute_per_anatomy_from_raw(
             y_true, y_scores, anatomies
         )
 
         if val_loader is not None:
-            val_y_true, val_y_scores, val_anatomies, _ = self.evaluate(val_loader)
+            val_y_true, val_y_scores, val_anatomies, _ = self.evaluate(val_loader, desc="Val set (thresholds)")
             thresholds = self.compute_thresholds(
                 val_y_true, val_y_scores, val_anatomies, target_sensitivity
             )
@@ -317,7 +323,7 @@ class TriageEvaluator:
     ) -> Dict[str, Any]:
         """Fit calibration on train/val set, then evaluate on test."""
         if train_loader is not None:
-            y_train, y_scores_train, _, _ = self.evaluate(train_loader)
+            y_train, y_scores_train, _, _ = self.evaluate(train_loader, desc="Train set")
             self.model.calibrate(y_scores_train, y_train)
 
         return self.full_evaluation(

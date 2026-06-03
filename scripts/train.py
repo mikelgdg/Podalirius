@@ -88,6 +88,12 @@ def _parse_args() -> argparse.Namespace:
         help="Enable multi-sequence input mode.",
     )
     parser.add_argument(
+        "--mode",
+        choices=["classification", "segmentation"],
+        default="classification",
+        help="Training mode: classification (triage) or segmentation (heatmap).",
+    )
+    parser.add_argument(
         "--logger",
         choices=["tensorboard", "wandb"],
         default="tensorboard",
@@ -195,11 +201,25 @@ def main() -> None:
     logger.info("  run card saved : %s/run_card.yaml", output_dir)
 
     logger.info("Building model...")
-    try:
-        model = build_triage_model(config.model, device=args.device)
-    except Exception:
-        logger.error("Failed to build model:\n%s", traceback.format_exc())
-        sys.exit(1)
+    if args.mode == "segmentation":
+        logger.info("  mode            : segmentation (decoder-only)")
+        from triagemri.models.segmentation import build_segmentation_model
+
+        try:
+            model = build_segmentation_model(
+                checkpoint_path=config.model.encoder.checkpoint,
+                embed_dim=config.model.encoder.embed_dim,
+                device=args.device,
+            )
+        except Exception:
+            logger.error("Failed to build segmentation model:\n%s", traceback.format_exc())
+            sys.exit(1)
+    else:
+        try:
+            model = build_triage_model(config.model, device=args.device)
+        except Exception:
+            logger.error("Failed to build model:\n%s", traceback.format_exc())
+            sys.exit(1)
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(
@@ -258,16 +278,58 @@ def main() -> None:
             pass
 
     logger.info("Creating DataLoaders...")
-    try:
-        dataloaders = create_dataloaders(config, enabled_anatomies=args.anatomies)
-    except Exception:
-        logger.error("Failed to create DataLoaders:\n%s", traceback.format_exc())
-        sys.exit(1)
+    if args.mode == "segmentation":
+        from triagemri.data.segmentation_dataset import SegmentationDataset
+        from torch.utils.data import DataLoader
+
+        try:
+            ds_train = SegmentationDataset(
+                split="train",
+                anatomies=args.anatomies,
+                normal_ratio=0.30,
+            )
+            ds_val = SegmentationDataset(
+                split="val",
+                anatomies=args.anatomies,
+                normal_ratio=0.30,
+            )
+            ds_test = SegmentationDataset(
+                split="test",
+                anatomies=args.anatomies,
+                normal_ratio=0.30,
+            )
+            batch_size = int(config.training.batch_size)
+            num_workers = int(config.training.num_workers)
+            train_loader = DataLoader(
+                ds_train, batch_size=batch_size, shuffle=True,
+                num_workers=num_workers, pin_memory=True,
+            )
+            val_loader = DataLoader(
+                ds_val, batch_size=batch_size, shuffle=False,
+                num_workers=num_workers, pin_memory=True,
+            )
+            test_loader = DataLoader(
+                ds_test, batch_size=batch_size, shuffle=False,
+                num_workers=num_workers, pin_memory=True,
+            )
+            dataloaders = {"train": train_loader, "val": val_loader, "test": test_loader}
+        except Exception:
+            logger.error("Failed to create segmentation DataLoaders:\n%s", traceback.format_exc())
+            sys.exit(1)
+    else:
+        try:
+            dataloaders = create_dataloaders(config, enabled_anatomies=args.anatomies)
+        except Exception:
+            logger.error("Failed to create DataLoaders:\n%s", traceback.format_exc())
+            sys.exit(1)
     _validate_dataloaders(dataloaders)
 
     loss_cfg = config.training.loss
     loss_kwargs = loss_cfg.to_dict() if hasattr(loss_cfg, "to_dict") else dict(loss_cfg)
     loss_name: str = loss_kwargs.pop("name", "weighted_bce")
+    if args.mode == "segmentation":
+        loss_name = "segmentation"
+        loss_kwargs = {"lambda_bce": 1.0, "lambda_dice": 1.0}
     try:
         loss_fn = get_loss_fn(loss_name, **loss_kwargs)
     except ValueError as exc:
@@ -276,25 +338,45 @@ def main() -> None:
     logger.info("  loss             : %s (kwargs=%s)", loss_name, loss_kwargs)
 
     logger.info("Building Lightning module...")
-    lightning_module = TriageLightningModule(model, loss_fn, config)
+    if args.mode == "segmentation":
+        from triagemri.training.segmentation_trainer import SegmentationLightningModule
+        lightning_module = SegmentationLightningModule(
+            model, loss_fn,
+            lr=float(config.training.optimizer.lr),
+            weight_decay=float(config.training.optimizer.weight_decay),
+            warmup_epochs=int(config.training.scheduler.warmup_epochs),
+            min_lr=float(config.training.scheduler.min_lr),
+            max_epochs=int(config.training.max_epochs),
+        )
+    else:
+        lightning_module = TriageLightningModule(model, loss_fn, config)
 
     ckpt_cfg = config.training.checkpoint
     es_cfg = config.training.early_stopping
 
+    if args.mode == "segmentation":
+        monitor_metric = "val/dice"
+        monitor_mode = "max"
+        checkpoint_filename = "epoch_{epoch:02d}-dice_{val/dice:.3f}"
+    else:
+        monitor_metric = ckpt_cfg.monitor
+        monitor_mode = ckpt_cfg.mode
+        checkpoint_filename = "epoch_{epoch:02d}-auc_{val/roc_auc:.3f}"
+
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(output_dir / "checkpoints"),
-        filename="epoch_{epoch:02d}-auc_{val/roc_auc:.3f}",
-        monitor=ckpt_cfg.monitor,
-        mode=ckpt_cfg.mode,
+        filename=checkpoint_filename,
+        monitor=monitor_metric,
+        mode=monitor_mode,
         save_top_k=int(ckpt_cfg.save_top_k),
         save_last=True,
     )
 
     early_stop_callback = EarlyStopping(
-        monitor=es_cfg.monitor,
+        monitor=monitor_metric,
         patience=int(es_cfg.patience),
         min_delta=float(es_cfg.get("min_delta", 0.001)),
-        mode=es_cfg.mode,
+        mode=monitor_mode,
     )
 
     lr_monitor = LearningRateMonitor(logging_interval="epoch")

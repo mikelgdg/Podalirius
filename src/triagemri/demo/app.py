@@ -83,6 +83,7 @@ class _DemoModelWrapper:
         anatomy_mode: str,
         default_anatomy: str = "brain",
         inconclusive_range: Optional[Tuple[float, float]] = None,
+        seg_model: Optional[torch.nn.Module] = None,
     ) -> None:
         self.model = model
         self.thresholds = thresholds
@@ -90,6 +91,7 @@ class _DemoModelWrapper:
         self.anatomy_mode = anatomy_mode
         self.default_anatomy = default_anatomy
         self.inconclusive_range = inconclusive_range
+        self.seg_model = seg_model
 
 
 def _overlay_attention(
@@ -154,12 +156,32 @@ def _predict_single(
         hm = torch.sigmoid(output["heatmap"]).cpu().numpy()
         heatmap_3d = hm[0, 0]
 
+    # Run segmentation model if available (Model B → heatmap override)
+    seg_heatmap_3d = None
+    if wrapper.seg_model is not None and decision != "NORMAL":
+        with torch.no_grad():
+            seg_out = wrapper.seg_model(volume)
+            shm = torch.sigmoid(seg_out["heatmap"]).cpu().numpy()
+            seg_heatmap_3d = shm[0, 0]
+
     if "attention" in output:
         attn = output["attention"].cpu().numpy()
         n_subvols = attn.shape[1]
-        grid_side = int(round(n_subvols ** (1 / 3)))
-        if grid_side ** 3 == n_subvols:
-            attn_3d = attn.reshape(grid_side, grid_side, grid_side)
+        # Multi-scale: find the largest cubic sub-grid (finest resolution)
+        largest_side = 1
+        for side in range(round(n_subvols ** (1 / 3)), 1, -1):
+            if side ** 3 <= n_subvols:
+                largest_side = side
+                break
+        cubic_n = largest_side ** 3
+        if cubic_n > 1:
+            # The first cubic_n tokens are the finest scale (stage3 = 6³ = 216)
+            attn_3d = attn[:, :cubic_n, :].reshape(largest_side, largest_side, largest_side)
+            if n_subvols > cubic_n:
+                attn_warning = (
+                    f"Multi-scale: showing finest grid ({largest_side}³={cubic_n} "
+                    f"of {n_subvols} tokens)"
+                )
         else:
             attn_warning = "Attention grid non-cubic — display simplified"
 
@@ -171,6 +193,7 @@ def _predict_single(
         "attn_3d": attn_3d,
         "attn_warning": attn_warning,
         "heatmap_3d": heatmap_3d,
+        "seg_heatmap_3d": seg_heatmap_3d,
     }
 
 
@@ -220,6 +243,7 @@ def _process_upload(
 
     score = result["score"]
     decision = result["decision"]
+    seg_heatmap_3d = result.get("seg_heatmap_3d")
     heatmap_3d = result.get("heatmap_3d")
 
     case_label_id = None
@@ -236,7 +260,12 @@ def _process_upload(
 
     volume_disp = volume_display.unsqueeze(0).unsqueeze(0)
 
-    if heatmap_3d is not None and not (decision == "NORMAL"):
+    if seg_heatmap_3d is not None and not (decision == "NORMAL"):
+        # Model B: full 96³ segmentation heatmap — no crop interpolation needed
+        attn_full = np.clip(seg_heatmap_3d, 0, 1)
+        if attn_full.max() > 0:
+            attn_full /= attn_full.max()
+    elif heatmap_3d is not None and not (decision == "NORMAL"):
         hm = heatmap_3d.copy()
         hm = np.clip(hm, 0, 1)
         if hm.max() > 0:
@@ -317,6 +346,19 @@ def _process_upload(
             pred_label = 1 if decision == "REVISAR" else 0
             icon = "OK" if gt_label == pred_label else "FAIL"
             info_lines.insert(1, f"- **GT:** {gt_str}  {icon}")
+        # Show mask availability
+        has_mask = any(
+            e.get("has_mask") and e.get("case_id") == case_id.strip()
+            for e in _CASE_REGISTRY.values()
+        )
+        mask_str = "Sí" if has_mask else "No"
+        info_lines.insert(2, f"- **Máscara GT:** {mask_str}")
+
+    # Determine attention grid resolution for wireframe
+    attn_grid_side = None
+    raw_attn = result.get("attn_3d")
+    if raw_attn is not None:
+        attn_grid_side = raw_attn.shape[0]
 
     return (
         axial,
@@ -330,6 +372,7 @@ def _process_upload(
             seg_3d,
             crop_offsets,
             crop_shape,
+            attn_grid_side=attn_grid_side,
             is_normal=is_normal,
         ),
         None,
@@ -461,7 +504,7 @@ def _create_3d_plot(
     seg_3d: Optional[np.ndarray],
     crop_offsets: Tuple[int, int, int],
     crop_shape: Tuple[int, int, int],
-    attn_grid: Optional[np.ndarray] = None,
+    attn_grid_side: Optional[int] = None,
     is_normal: bool = False,
 ) -> Any:
     import plotly.graph_objects as go
@@ -484,6 +527,14 @@ def _create_3d_plot(
             traces.append(
                 _build_3d_mesh(attn_full, attn_level, "yellow", 0.25, "Attention")
             )
+
+    if attn_grid_side is not None and attn_grid_side > 1:
+        _draw_grid_wireframe(
+            traces,
+            x0=0, y0=0, z0=0,
+            x_sz=96, y_sz=96, z_sz=96,
+            grid_side=attn_grid_side,
+        )
 
     fig = go.Figure(data=traces)
     fig.update_layout(
@@ -597,12 +648,17 @@ def _list_available_cases() -> List[str]:
         ds = BrainMRIDataset(
             data_root=project_root / "data" / "raw" / "brain",
             split="test",
-            sources=("brats", "oasis"),
+            sources=("brats", "oasis", "ixi", "hcp"),
             **split_kwargs,
         )
         for case in ds._cases:
-            prefix = "Positive" if case["label"] == 1 else "Negative"
-            display_name = f"[Brain] {prefix}: {case['case_id']}"
+            has_mask = case.get("mask_path") is not None
+            if case["label"] == 1:
+                mask_str = " ✓mask" if has_mask else " ✗no-mask"
+            else:
+                mask_str = " ✓mask" if has_mask else ""
+            prefix = "🟢N" if case["label"] == 0 else "🔴A"
+            display_name = f"[Brain] {prefix}: {case['case_id']}{mask_str}"
             vpaths = case.get("volume_paths", {})
             fpath = vpaths.get("t1ce") or vpaths.get("t1") or next(
                 iter(vpaths.values()), None
@@ -613,6 +669,7 @@ def _list_available_cases() -> List[str]:
                     "case_id": case["case_id"],
                     "label": case["label"],
                     "anatomy": "brain",
+                    "has_mask": case.get("mask_path") is not None,
                 }
     except Exception as e:
         print(f"Error loading brain test split: {e}")
@@ -628,8 +685,13 @@ def _list_available_cases() -> List[str]:
             **split_kwargs,
         )
         for case in ds._cases:
-            prefix = "Positive" if case["label"] == 1 else "Negative"
-            display_name = f"[Prostate] {prefix}: {case['case_id']}"
+            has_mask = case.get("mask_path") is not None
+            if case["label"] == 1:
+                mask_str = " ✓mask" if has_mask else " ✗no-mask"
+            else:
+                mask_str = " ✓mask" if has_mask else ""
+            prefix = "🟢N" if case["label"] == 0 else "🔴A"
+            display_name = f"[Prostate] {prefix}: {case['case_id']}{mask_str}"
             vpaths = case.get("volume_paths", {})
             fpath = vpaths.get("t2w") or next(iter(vpaths.values()), None)
             if fpath:
@@ -638,11 +700,26 @@ def _list_available_cases() -> List[str]:
                     "case_id": case["case_id"],
                     "label": case["label"],
                     "anatomy": "prostate",
+                    "has_mask": case.get("mask_path") is not None,
                 }
     except Exception as e:
         print(f"Error loading prostate test split: {e}")
 
     return sorted(_CASE_REGISTRY.keys())
+
+
+def _filter_cases_for_segmentation() -> None:
+    """Filter the case registry to only show cases relevant for segmentation eval.
+
+    Keeps: all normals (to verify no hallucination) and abnormals with GT masks
+    (to compare heatmap vs ground truth). Removes abnormals without masks.
+    """
+    global _CASE_REGISTRY
+    _CASE_REGISTRY = {
+        name: entry
+        for name, entry in _CASE_REGISTRY.items()
+        if entry["label"] == 0 or entry.get("has_mask", False)
+    }
 
 
 def _get_case_file(case_label_id: str) -> Optional[str]:
@@ -662,6 +739,7 @@ def create_demo(
     anatomy_mode: str = "shared",
     available_anatomies: Optional[List[str]] = None,
     inconclusive_range: Optional[Tuple[float, float]] = None,
+    seg_model: Optional[torch.nn.Module] = None,
 ) -> Any:
     import importlib.util
 
@@ -684,7 +762,13 @@ def create_demo(
         anatomy_mode=anatomy_mode,
         default_anatomy=default_anatomy,
         inconclusive_range=inconclusive_range,
+        seg_model=seg_model,
     )
+
+    # Build segmentation-filtered case list when seg model is loaded
+    _list_available_cases()
+    if seg_model is not None:
+        _filter_cases_for_segmentation()
 
     custom_css = """
     .result-normal { background-color: #e8f5e9 !important; }
@@ -748,10 +832,8 @@ def create_demo(
                     if not label_id:
                         return None, "", "brain", ""
                     fpath = _get_case_file(label_id)
-                    actual_id = (
-                        label_id.split(": ")[1] if ": " in label_id else label_id
-                    )
                     entry = _CASE_REGISTRY.get(label_id, {})
+                    actual_id = entry.get("case_id", "")
                     anatomy = entry.get("anatomy", "brain")
                     return fpath, actual_id, anatomy, fpath
 
@@ -783,7 +865,8 @@ def create_demo(
 
         gr.Markdown("---")
         gr.Markdown("### Cortes 2D con Heatmap")
-        gr.Markdown("*Rojo = GT (tumor real) | Amarillo = atención del modelo*")
+        heatmap_label = "Rojo = GT (tumor real) | Amarillo = Model B (segmentación)" if seg_model is not None else "Rojo = GT (tumor real) | Amarillo = atención del modelo"
+        gr.Markdown(f"*{heatmap_label}*")
 
         with gr.Row():
             with gr.Column():
@@ -828,13 +911,31 @@ def launch_demo(
     thresholds_file: Optional[str] = None,
     available_anatomies: Optional[List[str]] = None,
     inconclusive_range: Optional[Tuple[float, float]] = None,
+    seg_checkpoint_path: Optional[str] = None,
 ) -> Any:
     print(f"Loading config from: {config_dir}")
     config = load_config(config_dir)
 
-    print(f"Loading model from: {checkpoint_path}")
+    print(f"Loading classifier from: {checkpoint_path}")
     model = build_triage_model(checkpoint_path, device=device)
-    print(f"Model loaded. Anatomy mode: {model.anatomy_mode}")
+    print(f"Classifier loaded. Anatomy mode: {model.anatomy_mode}")
+
+    seg_model = None
+    if seg_checkpoint_path:
+        from triagemri.models.segmentation import build_segmentation_model
+        print(f"Loading segmentation model from: {seg_checkpoint_path}")
+        seg_model = build_segmentation_model(
+            checkpoint_path=config.model.encoder.checkpoint,
+            embed_dim=config.model.encoder.embed_dim,
+            device=device,
+        )
+        # Load seg checkpoint weights
+        seg_ckpt = torch.load(seg_checkpoint_path, map_location=device, weights_only=True)
+        seg_state = seg_ckpt.get("state_dict", seg_ckpt)
+        seg_state = {k.removeprefix("model."): v for k, v in seg_state.items()}
+        seg_model.load_state_dict(seg_state, strict=False)
+        seg_model.eval()
+        print("Segmentation model loaded.")
 
     thresholds: Dict[str, Dict[str, float]] = {}
     if thresholds_file and Path(thresholds_file).exists():
@@ -859,6 +960,7 @@ def launch_demo(
         anatomy_mode=model.anatomy_mode,
         available_anatomies=available_anatomies,
         inconclusive_range=inconclusive_range,
+        seg_model=seg_model,
     )
 
     print(f"\nLaunching demo on http://{server_name}:{server_port}")

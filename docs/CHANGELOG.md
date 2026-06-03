@@ -1,4 +1,30 @@
-# Changelog — Triage-MRI
+# Changelog — Podalirius (Triage-MRI)
+
+## 2026-06-03 — Rediseño arquitectónico: pipeline de dos modelos
+
+- **Arquitectura:** Separación en Modelo A (clasificación) + Modelo B (segmentación) tras evidencia experimental de competencia de gradiente en V4-V6.
+
+**Modelo A — V7 (clasificación):**
+- `configs/model.yaml`: `multi_scale: true`, `lora.enabled: true`, `decoder.enabled: false`
+- `configs/train.yaml`: `loss: weighted_bce`, `batch_size: 4`, `grad_accum: 2`
+- AUC test V3: 0.9825 con 99.2% sensibilidad, 79.8% especificidad, 33% discard
+
+**Modelo B — V8 (segmentación):**
+- `src/triagemri/data/segmentation_dataset.py` (nuevo): Dataset con normales (máscara=0) + anormales con GT. 30% ratio de normales para anti-alucinación.
+- `src/triagemri/models/segmentation.py` (nuevo): Triad congelado + AnomalyDecoder. Sin MIL. 4M params entrenables.
+- `src/triagemri/training/losses.py`: Añadido `SegmentationLoss` (BCEWithLogits + soft Dice).
+- `src/triagemri/training/segmentation_trainer.py` (nuevo): LightningModule mínimo para decoder-only.
+- `scripts/train.py`: Unificado con `--mode segmentation` / `--mode classification`.
+
+**Demo unificada:**
+- `src/triagemri/demo/app.py`: Soporte para `--seg_checkpoint`. Pipeline A+B: clasifica + muestra heatmap de segmentación. Dropdown filtra casos con máscara GT cuando hay seg model.
+- `scripts/demo.py`: Añadido flag `--seg_checkpoint`.
+
+**Documentación:**
+- `docs/evolucion_proyecto.md`: Crónica completa del desarrollo.
+- `docs/rediseno_dos_modelos.md`: Propuesta de arquitectura con evaluación experta.
+- `CHEATSHEET.md`: Actualizado con modelos V3/V7/V8 y comandos de demo pipeline.
+- `CONTRIBUTING.md`, `SECURITY.md`, `README.md`: Correcciones pre-push.
 
 ## 2026-06-01 — Ronda 0: Infraestructura (auditoría bugs)
 - **Archivos modificados:** `src/triagemri/config.py`, `configs/train.yaml`, `configs/model.yaml`, `configs/data.yaml`, `scripts/train.py`, `tests/test_preprocessing.py`, `tests/test_triage.py`, `tests/test_trainer.py`

@@ -4,6 +4,7 @@ Launch the Triage-MRI Gradio demo.
 
 Usage:
     python scripts/demo.py --checkpoint model.pt
+    python scripts/demo.py --checkpoint model.pt --seg_checkpoint seg_model.pt
     python scripts/demo.py --checkpoint model.pt --share --port 8080
     python scripts/demo.py --checkpoint model.pt --thresholds results/thresholds.json
 """
@@ -67,6 +68,11 @@ def main() -> None:
         help="Override available anatomies in the dropdown "
              "(default: brain prostate breast).",
     )
+    parser.add_argument(
+        "--seg_checkpoint",
+        default=None,
+        help="Optional segmentation model checkpoint (Model B) for high-res heatmaps.",
+    )
     args = parser.parse_args()
 
     launch_demo(
@@ -78,6 +84,7 @@ def main() -> None:
         server_port=args.port,
         thresholds_file=args.thresholds,
         available_anatomies=args.anatomies,
+        seg_checkpoint_path=args.seg_checkpoint,
     )
 
 

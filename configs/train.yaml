@@ -1,10 +1,9 @@
 training:
-  batch_size: 2
+  batch_size: 4
   num_workers: 4
   max_epochs: 100
   deterministic: false
-  gradient_accumulation_steps: 4
-  decoder_warmup_epochs: 5
+  gradient_accumulation_steps: 2
 
   optimizer:
     name: "adamw"
@@ -18,12 +17,7 @@ training:
     min_lr: 1.0e-6
 
   loss:
-    name: "multi_task"
-    lambda_bce: 1.0
-    lambda_smooth: 0.05
-    lambda_attn: 0.02
-    lambda_mask: 0.1
-    lambda_dice: 0.1
+    name: "weighted_bce"
 
   imbalance:
     use_weighted_sampler: true

@@ -21,7 +21,7 @@ model:
     multi_scale: true
 
   decoder:
-    enabled: true
+    enabled: false
     upconv_channels: [256, 128, 64, 32, 16]
     attention_gates: true
     dropout: 0.1
